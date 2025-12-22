@@ -1,0 +1,1 @@
+This repository contains code based on the book 'Using R for Item Response Theory Model Applications' (Paek & Cole, 2019). I have refactored and extended the original code to improve performance and add new functionalities.
