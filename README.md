@@ -8,4 +8,5 @@ For further information regarding the differences between CML and MML estimators
 
 
 References
-- Bartolucci, F., & Scrucca, L. (2010). Point Estimation Methods with Applications to Item Response Theory Models.
+- Bartolucci, F., & Scrucca, L. (2010). Point Estimation Methods with Applications to Item Response Theory Models. https://doi.org/10.1016/B978-0-08-044894-7.01376-2
+- Paek, I., & Cole, K. (2019). Using R for Item Response Theory Model Applications (1st ed.). Routledge. https://doi.org/10.4324/9781351008167
