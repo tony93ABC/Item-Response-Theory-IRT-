@@ -1,0 +1,923 @@
+---
+title: "mirt_MML_IRT_unidimensional_analysis"
+author: "Antony Bologna"
+date: "2025-12-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Clear Environment
+rm(list = ls())
+
+# Clear Console
+cat("\014")
+```
+
+# 1) LIBRARIES
+
+```{r Libreries}
+# 1. Define the list of required packages
+required_packages <- c("readr", "mirt", 
+                       "ggplot2", "here",
+                       "psych")
+
+# 2. Check which ones are not yet installed
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+
+# 3. If missing, install them
+if(length(new_packages)) install.packages(new_packages)
+
+# 4. (Optional) Load the libraries
+lapply(required_packages, 
+       library, 
+       character.only = TRUE)
+```
+
+# 2) OPTIONS
+
+```{r Options}
+options(max.print = 99999, 
+        digits = 4)
+```
+
+# 3) LOAD & SELECTION DF
+
+## 3a) LOAD DF
+
+```{r Load_df}
+# Load the data
+if(interactive()){
+  file_path <- file.choose() # Apre finestra di dialogo
+  df <- read_delim(file_path, delim = ";", ...)
+}
+```
+
+## 3b) DF SELECTION
+Create a subset (sub.df) of the dataframe containing only the item response columns (excluding demographic variables or IDs)
+```{r DF_Selection}
+# Choose item columns
+items <- grep("^L_", 
+              names(df),
+              value = T)
+# Number of item
+n.item <- length(items)
+
+# A new df (sub.df) is created here
+sub.df <- df[ , items]
+
+```
+
+# 4) Pre-Analysis: Dimensionality Check
+```{r}
+# 1. Compute the Tetrachoric Correlation Matrix
+# Since the data is binary (0/1), Pearson correlation is biased. 
+# We use tetrachoric correlation to estimate the relationship between the underlying normal latent traits.
+tetrachoric_matrix <- tetrachoric(sub.df)$rho
+
+# 2. Run Parallel Analysis (The Gold Standard)
+# This technique compares the eigenvalues of your actual data against 
+# the eigenvalues of random noise (Simulated Data) to determine the number of factors.
+fa.parallel(tetrachoric_matrix, 
+            n.obs = nrow(sub.df), 
+            fa = "pc",       # Use Principal Components
+            cor = "tet",     # Specify tetrachoric correlations
+            main = "Parallel Analysis: Check for Unidimensionality")
+
+# --- INTERPRETATION RULE (Empirical) ---
+# Look at the plot generated:
+# - Blue Line = Actual Data (Your items)
+# - Red Line  = Simulated Data (Random noise)
+#
+# CRITERIA:
+# If the Blue Line has ONLY ONE point (triangle) above the Red Line, 
+# then the Unidimensionality Assumption HOLDS.
+#
+# If there are 2 or more points above the red line, the data is Multidimensional,
+# and standard IRT models (1PL/2PL/3PL) might be biased.
+```
+# 5) Model Definition
+In this section, 'Model Definition,' the 1PLM, 2PLM, 3PLM, and 4PLM models are defined, followed by the identification of the model that best fits the data. The Error Estime is Oakes method (default)
+
+## 5a) 1PLM
+
+### 5a-1) 1PLM Model Specification & Estimation
+
+```{r 1PLM_Definition}
+# 1. Define the model syntax with equality constraints
+# F = 1-n.item: Specifies a unidimensional structure (all items load on 1 factor).
+# CONSTRAIN = ... : Forces the discrimination parameter (slope 'a1') to be equal for all items.
+# This restriction turns the general 2PL structure into a 1PL (Rasch-like) model, 
+# where items differ only in difficulty, not in discrimination.
+spec.1pl <- paste0("F = 1-", n.item, "\n",
+                   "CONSTRAIN = (1-", n.item, ", a1)")
+
+# 2. Estimate the 1-Parameter Logistic (1PL) Model
+# Note: We use itemtype = "2PL" combined with the constraint above.
+# This allows the common discrimination parameter to be estimated freely 
+# (instead of fixing it to 1 as in a strict Rasch model).
+mod.1pl <- mirt(data = sub.df, 
+                model = spec.1pl,
+                itemtype = "2PL",
+                SE = TRUE) # Compute Standard Errors
+```
+
+### 5a-2) 1PLM Convergence Diagnostics
+
+```{r 1PLM_Convergence}
+# 1. Verify if the estimation algorithm terminated successfully
+# This confirms that the iterative process stopped within the tolerance limits.
+cat("Has the model reached convergence? ")
+extract.mirt(x = mod.1pl, 
+             what = "converged") 
+
+cat("\n")
+
+# 2. Verify the stability of the solution (Second-Order Test)
+# This checks if the Hessian matrix (second derivatives) is positive definite.
+# It ensures the solution is a true local maximum, not a saddle point or unstable solution.
+cat("Is the convergence stable? ")
+extract.mirt(x = mod.1pl, 
+             what = "secondordertest")
+```
+
+## 5b) 2PLM
+
+### 5b-1) 2PLM Model Specification & Estimation
+
+```{r 2PLM_Definition}
+spec.2pl <- paste0("F = 1-", n.item) 
+
+mod.2pl <- mirt(data = sub.df, 
+                model = spec.2pl,    
+                itemtype = "2PL",
+                SE = TRUE)
+```
+
+### 5b-2) 2PLM Convergence Diagnostics
+
+```{r 2PLM_Convergence}
+# 1. Verify if the estimation algorithm terminated successfully
+# This checks if the model stopped iterating within the specified tolerance limit.
+cat("Has the model reached convergence? ")
+extract.mirt(x = mod.2pl, 
+             what = "converged") 
+
+cat("\n")
+
+# 2. Verify the stability of the solution (Second-Order Test)
+# This checks if the Hessian matrix is positive definite. 
+# TRUE indicates a stable local maximum (not a saddle point).
+cat("Is the convergence stable? ")
+extract.mirt(x = mod.2pl, 
+             what = "secondordertest")
+```
+
+## 5c) 3PLM
+
+### 5c-1) Define Priors for Pseudo-Guessing (g)
+
+```{r g_Thresholds}
+# 1. Define prior beliefs (probabilities) for the guessing parameter
+g.mean  <- 0.15   # Expected average guessing probability (Mean = 15%)
+g.upper <- 0.20   # Hypothesized upper bound (Limit = 20%)
+
+# 2. Transform probabilities to the Logit scale 
+# We use qlogis() because IRT parameters operate on the logit scale (-Inf to +Inf),
+# while probabilities are bounded between 0 and 1.
+cat("The logit mean is: ")
+(logit.mean <- qlogis(g.mean)) 
+cat("\n")
+
+
+
+cat("The logit upper bound is: ")
+(logit.upper <- qlogis(g.upper)) 
+cat("\n")
+
+# 3. Compute the distance between the mean and the upper bound in logits
+delta.g <- logit.upper - logit.mean
+
+# 4. Compute the Standard Deviation (SD) for the Prior distribution
+# Assumption: The upper bound lies at +2 SD from the mean.
+# Therefore, SD = (Distance) / 2
+cat("The calculated standard deviation is: ")
+(logit.sd <- delta.g / 2)
+```
+
+### 5c-2) 3PL Model Specification & Estimation
+
+```{r 3PLM_Definition}
+# 1. Define the model syntax dynamically using paste0
+# F = 1-n.item: Specifies a unidimensional structure (all items load on Factor 1)
+# PRIOR = ... : Imposes a Bayesian Prior on the pseudo-guessing parameter (g)
+# We use a Normal distribution ('norm') centered at 'logit_mean' with a spread of 'logit_sd'
+# to stabilize the estimation of the lower asymptote.
+spec.3pl <- paste0("F = 1-", n.item, "\n",
+                   "PRIOR = (1-", n.item, ", g, norm, ", 
+                   logit.mean, ", ", logit.sd, ")")
+
+# 2. Estimate the 3-Parameter Logistic (3PL) Model
+# itemtype = "3PL": Estimates discrimination (a), difficulty (b), and guessing (g)
+# SE = TRUE: Computes Standard Errors (essential for statistical significance)
+mod.3pl <- mirt(data = sub.df, 
+                model = spec.3pl,
+                itemtype = "3PL",
+                SE = TRUE)
+```
+
+### 5c-3) 3PLM Convergence Diagnostics
+
+```{r 3PLM_Convergence}
+# 1. Check if the estimation algorithm terminated successfully
+# Returns TRUE if the model converged within the specified iterations/tolerance.
+cat("Has the model reached convergence? ")
+extract.mirt(x = mod.3pl, 
+             what = "converged") 
+
+# Add a line break for cleaner console output
+cat("\n")
+
+# 2. Check the stability of the solution (Second-Order Test)
+# Returns TRUE if the information matrix (Hessian) is positive definite.
+# This confirms that the solution is a local maximum and not a saddle point.
+cat("Is the convergence stable? ")
+extract.mirt(x = mod.3pl, 
+             what = "secondordertest")
+```
+
+
+## 5d) Model comparison
+```{r Model_Comparison}
+# --- MANUAL MODEL COMPARISON TABLE ---
+
+# Create a summary dataframe to compare fit statistics (AIC, BIC, LogLik) across models
+fit_table <- data.frame(
+  Model = c("1PL", "2PL", "3PL", "4PL"),
+  AIC = c(extract.mirt(mod.1pl, "AIC"),
+          extract.mirt(mod.2pl, "AIC"),
+          extract.mirt(mod.3pl, "AIC")),
+  BIC = c(extract.mirt(mod.1pl, "BIC"),
+          extract.mirt(mod.2pl, "BIC"),
+          extract.mirt(mod.3pl, "BIC")),
+  LogLik = c(extract.mirt(mod.1pl, "logLik"),
+             extract.mirt(mod.2pl, "logLik"),
+             extract.mirt(mod.3pl, "logLik"))
+)
+
+# Sort the table by BIC in ascending order (Lower BIC indicates better fit)
+# The best model will be placed in the first row
+(fit_table <- fit_table[order(fit_table$BIC), ])
+
+# Identify the name of the winner (taking the first element of the sorted column)
+winner_name <- fit_table$Model[1] 
+
+# Print the result to the console
+paste("The best-fitting model is:", winner_name)
+
+# --- AUTOMATIC MODEL SELECTION ---
+
+# Create a list mapping model names to the actual model objects
+model_list <- list("1PL" = mod.1pl, 
+                   "2PL" = mod.2pl, 
+                   "3PL" = mod.3pl,
+                   "4PL" = mod.4pl)
+
+# Extract and store the winning model object for further analysis
+best_model <- model_list[[winner_name]]
+```
+
+## 5e) Instrument Calibration & Mapping 
+
+### 5e-1) Model coefficients
+```{r Best_Model_Coefficients}
+# --- ITEM PARAMETERS EXTRACTION ---
+
+# 1. Extract simplified item parameters in IRT metric
+# IRTpars = TRUE: Converts parameters to traditional IRT metric (a = discrimination, b = difficulty)
+# simplify = TRUE: Returns a clean dataframe instead of a list
+(item.coef <- coef(object = best_model, 
+                   IRTpars = TRUE, 
+                   simplify = TRUE))
+
+cat("\n")
+cat("##########################################################################")
+cat("\n")
+
+# 2. Extract item parameters as a list (includes Confidence Intervals)
+# Without 'simplify = T', it returns a list containing CIs for each item
+coef(object = best_model, 
+     IRTpars = TRUE)
+
+cat("\n")
+cat("##########################################################################")
+cat("\n")
+
+# 3. Extract item parameters including Standard Errors (SE)
+# printSE = TRUE: Adds the Standard Error columns to the output
+coef(object = best_model, 
+     IRTpars = TRUE, 
+     printSE = TRUE)
+
+cat("\n")
+cat("##########################################################################")
+cat("\n")
+
+# 4. Manually calculate Standard Errors from the Variance-Covariance matrix
+# We extract the diagonal of the vcov matrix and take the square root
+round(sqrt(diag(extract.mirt(best_model, what = "vcov"))), 3)
+```
+
+# 6) Person latent trait, or ability score estimation
+
+```{r Person_Latent_Trait}
+# --- FACTOR SCORING (THETA ESTIMATION) ---
+
+# Calculate factor scores (Theta estimates) for each individual
+# method = "EAP": Expected A Posteriori (standard Bayesian method)
+# full.scores = TRUE: Returns scores for every respondent (not just unique patterns)
+# full.scores.SE = TRUE: Includes Standard Errors for the estimates
+
+(f.score <- fscores(object = best_model, 
+                    method = "EAP",
+                    full.scores = T,
+                    full.scores.SE = T))
+
+# --- FILTERING & SORTING ---
+
+# Select subjects with high Theta levels (e.g., Theta > 0)
+# Note: "F1" is the default name for the factor in mirt
+high_theta <- f.score[f.score[, "F"] > 0, ]
+
+# Sort the selected subjects by Theta in descending order (highest ability first)
+(high_theta_ordered <- high_theta[order(high_theta[, "F"], 
+                                       decreasing = F), ])
+```
+
+# 7) ICC, TCC, and information plots
+
+### 7a) ICC
+
+```{r}
+# Iterate through the list of items to generate a plot for each one
+for (i in items) {
+  # Generate the Item Characteristic Curve (ICC) for the specific item 'i'
+  # This visualizes the probability of a correct response (Y-axis) 
+  # as a function of the latent trait Theta (X-axis).
+  p <- itemplot(object = best_model, 
+                item = i)
+  # Explicitly print the plot object to render it
+  # Note: Inside a loop or RMarkdown chunk, plots are not displayed automatically without print()
+  print(p)
+}
+```
+
+### 7b) Itemp Probability Functions
+
+```{r}
+# --- COMBINED ITEM CHARACTERISTIC CURVES (All Items) ---
+# Plot the characteristic curves for all items overlaid on a single graph
+# type = "trace": Displays the probability functions (ICCs) for every item simultaneously.
+# This visualization ("Spaghetti plot") helps identify outlier items 
+# and compare discrimination/difficulty across the entire instrument.
+plot(x = best_model, 
+     type = "trace")
+```
+
+### 7c) Test Characteristic Curve (TCC) & Expected Score
+
+```{r}
+# 1. Plot the Test Characteristic Curve (TCC)
+# This graph maps the latent trait (Theta) to the Expected Total Score.
+# Unlike 1PL/2PL, in a 3PL model the curve does not start at 0.
+plot(x = mod.3pl)
+
+# 2. Verification: What is the theoretical score at Theta = -Infinity?
+# In a 3PL model, a student with infinitely low ability doesn't get a score of 0.
+# Instead, they get the sum of the guessing parameters (g) just by chance.
+
+# We extract the 'g' parameters (Column 3) and sum them up.
+sum(coef(object = mod.3pl,       # Changed to mod.3pl to be consistent with the plot
+         IRTpars = TRUE,
+         simplify = TRUE)$items[, 3])
+plot(x = mod.3pl)
+# ma quindi qual'è il punteggio con theta = - inf? (vedi sotto!)
+sum(coef(object = best_model,
+         IRTpars = T,
+         simplify = T)$item[, 3])
+```
+
+### 7d) Test & Item Information Functions
+
+```{r}
+# --- TEST INFORMATION FUNCTION (TIF) ---
+
+# 1. Plot the overall Test Information Function
+# This graph visualizes the total precision of the measurement instrument across the Theta scale.
+# Key concept: Information is the inverse of the Standard Error (SE).
+# - Higher peak = Lower error (Higher reliability).
+# - The location of the peak indicates the ability level where the test is most accurate.
+plot(x = best_model,
+     type = "info")
+
+# --- ITEM INFORMATION FUNCTIONS (IIF) ---
+
+# 2. Generate Information Curves for each individual item
+# This loop allows us to evaluate the specific contribution of each item to the total test precision.
+  # Plot the Item Information Function (IIF) for item 'i'
+  # - A high, narrow peak means the item is very precise but only for a specific range of ability.
+  # - A lower, wider curve means the item provides less information but covers a broader range.
+for (i in items){
+  p <- itemplot(object = best_model,
+                item = i,
+                type = "info")
+  print(p)
+}
+```
+
+### 7e) Test Information and Standard Error Curves
+
+```{r}
+# --- DUAL-AXIS PLOT: INFORMATION vs. STANDARD ERROR (Customized) ---
+
+# Plot both the Test Information Function (Solid line, Left Axis) 
+# and the Standard Error (Dashed line, Right Axis) on the same graph.
+# - theta_lim = c(-4, 4): Restricts the X-axis to focus on the most relevant ability range.
+# - lwd = 2: Increases the line width for better visibility in reports.
+plot(best_model, 
+     type = 'infoSE', 
+     theta_lim = c(-4,4), 
+     lwd=2)
+
+# --- DUAL-AXIS PLOT: INFORMATION vs. STANDARD ERROR (Default) ---
+
+# Generate the same plot using default settings (usually Theta -6 to +6)
+# allowing inspection of the extreme tails of the distribution.
+plot(best_model, 
+     type = 'infoSE')
+```
+
+### 7f) Estrazione picchi nelle curve
+
+```{r}
+# --- ITEM STATISTICS LOOP ---
+
+for (i in 1:length(items)) {
+  
+  # 1. Get the item name (FIX: use 'items', not 'list')
+  item_name <- items[i]
+  
+  # 2. Extract parameters safely (assuming IRTpars = TRUE was used)
+  # Col 1 = a (Discrimination), Col 2 = b (Difficulty), Col 3 = g (Guessing)
+  # Note: If model is 2PL, 'g' might be 0 or column might not exist, handled below.
+  current_params <- item.coef$items[i, ]
+  
+  a_val <- current_params[1]
+  b_val <- current_params[2]
+  
+  # Check if 'g' (guessing) exists (for 3PL), otherwise set to 0
+  g_val <- if(length(current_params) >= 3) current_params[3] else 0
+  
+  # 3. Calculate Information at the point of difficulty (b)
+  item_obj <- extract.item(best_model, item = i)
+  peak_info <- iteminfo(item_obj, Theta = b_val)
+  
+  # 4. Print formatted output
+  # Order of variables must match the % placeholders: Name -> a -> b -> g -> Info -> Theta
+  cat(sprintf("Item %s: a=%.3f, b=%.3f, g=%.3f -> Peak Info = %.3f at Theta = %.3f\n",
+              item_name,  # %s (Item Name)
+              a_val,      # %.3f (a)
+              b_val,      # %.3f (b)
+              g_val,      # %.3f (g)
+              peak_info,  # %.3f (Peak Info)
+              b_val))     # %.3f (Theta position)
+}
+```
+
+# 8) Model-data fit
+
+### 8a) Global Model Fit Assessment
+
+```{r}
+# --- GLOBAL FIT STATISTICS (M2) ---
+
+# Calculate the M2 statistic (Limited-Information Goodness-of-Fit)
+# This is the standard fit test for IRT models (analogous to Chi-square in SEM).
+M2(best_model)
+
+# --- INTERPRETATION GUIDELINES ---
+
+# 1. M2 Statistic (Chi-square based):
+#    - Goal: p-value > 0.05 (Non-significant)
+#    - Meaning: Unlike most tests, we want a HIGH p-value here. 
+#      If p > 0.05, we fail to reject the model, meaning the model FITS the data well.
+
+# 2. RMSEA (Root Mean Square Error of Approximation):
+#    - Excellent fit: < 0.05
+#    - Acceptable fit: < 0.08
+#    - Meaning: Measures the discrepancy between the model and the population.
+
+# 3. Comparative Indices (CFI / TLI):
+#    - Excellent fit: > 0.95
+#    - Acceptable fit: > 0.90
+#    - Meaning: Values closer to 1 indicate better fit compared to a null model.
+```
+
+### 8b) Item Fit Statistics (S-X2)
+```{r}
+# --- ITEM FIT ANALYSIS ---
+
+# 1. Calculate raw item fit statistics (Orlando & Thissen's S-X2)
+# This test checks if the specific item fits the model expectations.
+# Null Hypothesis (H0): The item fits the model.
+# Significant p-value (< 0.05): The item DOES NOT fit well (Misfit).
+(itemfit(best_model)) # Output without correction
+
+# --- BONFERRONI CORRECTION ---
+# Since we are performing multiple statistical tests (one per item), 
+# the risk of Type I error (False Positives) increases. 
+# We apply Bonferroni correction to control the Family-Wise Error Rate.
+
+# 2. Store the fit table in an object
+tabella_fit <- itemfit(best_model)
+
+# 3. Apply correction to the p-values (Method A: Adjusting p-values)
+# We create a new column 'p.adj_Bonferroni' where p-values are multiplied by the number of tests.
+# If p.adj < 0.05, the item is truly misfitting.
+tabella_fit$p.adj_Bonferroni <- p.adjust(tabella_fit$p.S_X2, 
+                                         method = "bonferroni")
+
+# View the adjusted p-values (rounded for readability)
+round(tabella_fit$p.adj_Bonferroni, 3) 
+
+# --- ALTERNATIVE METHOD: ADJUSTING ALPHA ---
+
+# 4. Calculate the corrected significance threshold manually (Method B)
+# Instead of adjusting the p-values up, we lower the alpha threshold.
+# Formula: Alpha / Number of Items
+# Example: 0.05 / 30 items = 0.0016
+item_names <- names(sub.df) # Ensure we get the list of items from the data
+(bonf.corr <- 0.05 / length(item_names))
+
+cat("Any item with a raw p-value below", round(bonf.corr, 5), "is misfitting.")
+
+```
+
+## 8c) Plot Item Fit 
+```{r}
+# --- VISUAL INSPECTION OF ITEM FIT (Empirical Plots) ---
+
+# 1. Retrieve the total number of items from the model object
+# This defines the range for our iteration.
+n_items <- extract.mirt(best_model, 
+                        what = "nitems") 
+
+# 2. Iterate through each item to generate diagnostic plots
+for (i in 1:n_items){
+  
+  # Generate the Empirical Fit Plot for item 'i'
+  # - empirical.plot = i: Compares observed proportions (dots) vs. model probabilities (line).
+  # - empirical.CI = .95: Adds 95% Confidence Interval bars to the observed data points.
+  #   If the model line passes through the CI bars, the fit is generally good.
+  plt <- itemfit(best_model, 
+                 empirical.plot = i, 
+                 empirical.CI = .95)
+   
+  # Explicitly print the plot object to render it within the loop
+  print(plt)
+}
+```
+
+### 8d) Person Fit Analysis & Sorting
+```{r}
+# --- PERSON FIT STATISTICS ---
+
+# 1. Calculate person fit statistics (Zh)
+# method = "EAP": Uses Expected A Posteriori estimation for the latent trait.
+# We look for "aberrant" response patterns.
+# Thresholds: Values > +1.96 or < -1.96 are considered statistically significant outliers (p < .05).
+personfit(best_model, 
+          method = "EAP")
+
+# 2. Merge and Sort Results
+# Create a comprehensive dataframe containing ID, original data, and fit statistics.
+# We sort by 'Zh' to immediately visualize the most aberrant respondents (worst fits first).
+p_fit <- cbind(ID = 1:nrow(sub.df), 
+               sub.df, 
+               personfit(best_model, method = "EAP"))
+
+# Sort and display rows based on Zh statistic
+p_fit[order(p_fit[, "Zh"]), ]
+```
+
+### 8e) Sensitivity Analysis (Data Cleaning & Re-calibration)
+```{r}
+# --- SENSITIVITY ANALYSIS: OUTLIER REMOVAL & INVARIANCE CHECK ---
+
+# 1. Retrieve the configuration of the winning model
+# We need to ensure we use exactly the same structure (1PL, 2PL, or 3PL)
+# that won the BIC comparison earlier.
+
+# Select the correct syntax string based on the winner name
+# (Assumes spec_1pl, spec_2pl, spec_3pl were defined earlier)
+spec.list <- list("1PL" = spec.1pl, 
+                  "2PL" = spec.2pl, 
+                  "3PL" = spec.3pl)
+
+current.spec <- spec.list[[winner_name]]
+
+# Select the correct itemtype
+# Note: For 1PL we used "2PL" with constraints, so we keep "2PL" for 1PL/2PL.
+# Only 3PL changes to "3PL".
+current.type <- if(winner_name == "3PL") "3PL" else "2PL"
+
+cat("Running Sensitivity Analysis on model type:", winner_name, "\n")
+
+
+# STEP 1: Identify and Filter Outliers using the BEST MODEL
+# ---------------------------------------------------------
+# a. Calculate person fit on the BEST model (not just Rasch)
+fit.subjects <- personfit(best_model, method = "EAP")
+
+# b. Define criteria (Outfit > 1.5 is a common threshold)
+to_remove <- fit_subjects$outfit > 1.5 
+
+# c. Safety Check: How many are we removing?
+cat("Number of subjects removed:", sum(to_remove), "\n")
+cat("Percentage of sample:", round((sum(to_remove)/nrow(df))*100, 2), "%\n")
+
+# d. Create Cleaned Dataset
+df_clean <- sub.df[!to_remove, ] 
+
+# e. Re-calibrate using the SAME specifications as the best model
+mod_clean <- mirt(data = df_clean, 
+                  model = current.spec,    # Uses the winner's syntax
+                  itemtype = current.type, # Uses the winner's type
+                  SE = TRUE,
+                  verbose = FALSE)
+
+
+# STEP 2: Parameter Comparison (Original vs. Clean)
+# ---------------------------------------------------------
+# a. Extract 'b' (difficulty) from the ORIGINAL best_model
+params_orig <- coef(best_model, 
+                    IRTpars = TRUE, 
+                    simplify = TRUE)$items
+b_orig <- params_orig[, "b"]
+
+# b. Extract 'b' (difficulty) from the NEW cleaned model
+params_clean <- coef(mod_clean, 
+                     IRTpars = TRUE, 
+                     simplify = TRUE)$items
+b_clean <- params_clean[, "b"]
+
+
+# STEP 3: Invariance Plot
+# ---------------------------------------------------------
+# Plot original difficulty vs. cleaned difficulty
+plot(b_orig, b_clean,
+     main = paste("Sensitivity Analysis:", winner_name, "Model"),
+     xlab = "Difficulty (Full Sample)",
+     ylab = "Difficulty (Cleaned Sample)",
+     pch = 19, col = "blue")
+
+abline(a = 0, b = 1, col = "red", lwd = 2, lty = 2)
+
+# Label items that moved significantly (optional visual aid)
+text(b_orig, b_clean, labels = names(b_orig), pos = 4, cex = 0.7)
+```
+### 8f) Local Independence Checks
+
+```{r}
+# --- 1. CHEN & THISSEN'S LOCAL DEPENDENCE (LD) STATISTICS ---
+
+# Calculate the LD matrix
+# The output 'rrr' is a matrix where:
+# - Lower triangle: LD-X2 statistics (Chi-square based)
+# - Upper triangle: Cramer's V (Effect size of the dependency)
+(rrr <- residuals(best_model, 
+                  type = "LD"))
+
+# Standardized LD-X2 (Approximate Z-score)
+# Rule of thumb: Values > 10 indicate potential local dependence (LD).
+# This formula transforms the Chi-square to a standardized scale.
+(abs(rrr) - 1) / sqrt(2)
+
+# --- A) EXTRACT & SORT LD-X2 (Significance) ---
+# We loop through the matrix to extract the Chi-square values (Lower Triangle)
+LDX2 <- NULL
+for (i in 1:ncol(rrr)){
+  for (j in i:nrow(rrr)){
+    if (i != j) {
+      # Bind: Absolute Value | Signed Value | Item Col | Item Row
+      LDX2 <- rbind(LDX2, cbind(abs(rrr[j, i]),
+                                rrr[j, i], 
+                                colnames(rrr)[i], 
+                                rownames(rrr)[j]))
+    }
+  }
+}
+
+# Display sorted results (Highest Chi-square first)
+# Removing the first column (absolute value) used only for sorting
+data.frame(LDX2[order(LDX2[, 1], decreasing = TRUE), ][, -1])
+
+# --- B) EXTRACT & SORT CRAMER'S V (Effect Size) ---
+# We loop through the matrix to extract Cramer's V values (Upper Triangle)
+CV <- NULL
+for (i in 1:nrow(rrr)){
+  for (j in i:ncol(rrr)){
+    if (i != j) {
+      CV <- rbind(CV, cbind(abs(rrr[i, j]), 
+                            rrr[i, j],
+                            rownames(rrr)[i], 
+                            colnames(rrr)[j]))
+    }
+  }
+}
+
+# Display sorted results (Highest Correlation first)
+data.frame(CV[order(CV[, 1], decreasing = TRUE), ][, -1])
+
+
+# --- 2. YEN'S Q3 STATISTIC (Residual Correlations) ---
+
+# Yen's Q3 measures the correlation between the residuals of two items.
+# If residuals are correlated, items share variance not explained by Theta.
+
+# 1. Calculate the Q3 residual matrix
+res_matrix <- residuals(best_model, 
+                        type = "Q3", 
+                        verbose = FALSE)
+
+# 2. Mask the diagonal and lower triangle to avoid duplicates
+# (We only need one comparison per pair, e.g., Item A-Item B)
+res_matrix[lower.tri(res_matrix, diag = TRUE)] <- NA
+
+# 3. Filter pairs exceeding the critical threshold
+# Common threshold: |0.20| (Marais, 2013). 
+# Values > 0.20 indicate a violation of local independence.
+bad_pairs <- which(abs(res_matrix) > 0.20, arr.ind = TRUE)
+
+# 4. Create and display a clean summary table
+if(nrow(bad_pairs) > 0) {
+  results <- data.frame(
+    Item_A = rownames(res_matrix)[bad_pairs[, 1]],
+    Item_B = colnames(res_matrix)[bad_pairs[, 2]],
+    Q3_Value = res_matrix[bad_pairs]
+  )
+  
+  # Sort by severity (Highest absolute Q3 first)
+  results <- results[order(abs(results$Q3_Value), decreasing = TRUE), ]
+  
+  print("Pairs showing Local Dependence (Q3 > |0.20|):")
+  print(results)
+  
+} else {
+  print("Excellent! No item pairs exceed the local dependence threshold of 0.20.")
+}
+```
+
+
+# 9) Summary Visualizations
+
+### 9a) Test Information vs. Population Density
+
+```{r}
+# This plot assesses the "Targeting" of the instrument.
+# Ideally, the peak of the Information curve (where the test is most precise)
+# should align with the center of the person distribution (density).
+
+plot(best_model,             # Use the winner model 
+     type = 'info', 
+     theta_lim = c(-4, 4),   # Focus on the relevant Theta range
+     lwd = 2,                # Line width for better visibility
+     main = "Test Targeting: Information vs. Density")
+```
+
+## 9b) Latent Trait Distribution (Theta)
+
+```{r}
+# 1. Generate Data for Test Information Function (TIF)
+# Create a sequence of Theta values from -4 to 4 to draw the curve
+Theta_grid <- matrix(seq(-4, 4, length.out=100))
+
+# Calculate information values based on the BEST MODEL
+info_values <- testinfo(best_model, Theta_grid) 
+df_info <- data.frame(Theta = Theta_grid, Info = info_values)
+
+# 2. Extract Person Ability Estimates (Theta)
+# fscores() retrieves the estimated latent trait for each subject.
+# as.vector() ensures the data is a simple vector, preventing structure errors.
+df_persons <- data.frame(Theta = as.vector(fscores(best_model, full.scores=TRUE)[,1]))
+
+# 3. Calculate Scaling Coefficient for Dual-Axis Plotting
+# PURPOSE: 'Density' usually ranges 0-0.5, while 'Information' can be 0-20+.
+# To plot them together, we calculate a ratio to scale the Density UP to match the Information peak.
+max_density <- max(density(df_persons$Theta)$y)
+max_info <- max(df_info$Info)
+coeff <- max_info / max_density
+
+# 4. Generate the Combined Plot (Targeting Analysis)
+ggplot() +
+  # A. Person Density (Grey Area)
+  # We multiply 'after_stat(density)' by 'coeff' to visually inflate the height
+  geom_density(data = df_persons, 
+               aes(x = Theta, y = after_stat(density) * coeff), 
+               fill = "grey80", color = NA, alpha = 0.5) +
+   
+  # B. Test Information Curve (Blue Line)
+  # This represents the precision of the test across the scale
+  geom_line(data = df_info, 
+            aes(x = Theta, y = Info), 
+            color = "blue", linewidth = 1.2) +
+   
+  # C. Define Dual Y-Axes
+  # Primary Axis (Left): Information (Raw values)
+  # Secondary Axis (Right): Density (Values transformed back by dividing by coeff)
+  scale_y_continuous(
+    name = "Test Information",
+    sec.axis = sec_axis(~./coeff, name = "Person Density")
+  ) +
+   
+  # D. Theme and Labels (translated to English)
+  theme_bw() +
+  labs(title = "Test Targeting: Information vs. Ability Distribution",
+       subtitle = "Blue Line = Measurement Precision | Grey Area = Person Distribution",
+       x = "Latent Trait (Theta)")
+```
+
+# 10) Reliability Analysis
+
+### 10a) Marginal Reliability
+
+Interpretazione: Se è $> 0.80$, il test è buono. Se è $> 0.90$, è eccellente.
+
+```{r}
+# --- MARGINAL RELIABILITY (Empirical Reliability) ---
+
+# Calculate the marginal reliability coefficient from the model
+# In IRT, this is roughly analogous to Cronbach's Alpha in Classical Test Theory.
+# It represents the average reliability across the entire population distribution.
+rel <- marginal_rxx(best_model)
+
+# Display the result
+# Interpretation Guidelines:
+# - > 0.80: Good reliability (Suitable for research)
+# - > 0.90: Excellent reliability (Suitable for high-stakes individual assessment)
+print(paste("Marginal Reliability:", round(rel, 3)))
+
+```
+
+### 10b) Conditional Reliability Function (Curve)
+
+```{r}
+# --- CONDITIONAL RELIABILITY PLOT ---
+
+# 1. Generate the base plot object
+# type = 'rxx': Plots the reliability coefficient as a function of Theta.
+# Unlike CTT, IRT acknowledges that reliability is not constant; 
+# a test can be very reliable for average students but unreliable for outliers.
+p <- plot(best_model, 
+          type = 'rxx', 
+          theta_lim = c(-4, 4), 
+          main = "Conditional Reliability Function",
+          lwd = 2, col = "darkgreen")
+
+# 2. Add a Reference Line (Benchmark)
+# Since 'mirt' uses the 'lattice' plotting system, we use update() to modify the graph.
+# We add a horizontal red dashed line at y = 0.80.
+# - Area ABOVE the red line: Range where the test is reliable.
+# - Area BELOW the red line: Range where measurement error is too high.
+update(p, panel = function(...){
+  panel.xyplot(...) # Plots the original green curve
+  panel.abline(h = 0.80, col = "red", lty = 2, lwd = 2) # Adds the cutoff line
+})
+```
+# 11) Conversion Table (Latent Trait to Expected True Score)
+
+```{r}
+# --- CREATION OF SCORING CONVERSION TABLE ---
+
+# 1. Define the Latent Trait Grid
+# We create a sequence of Theta values ranging from -4 (Low ability) to +4 (High ability).
+# 'by = 0.5' sets the granularity of the table.
+theta_grid <- matrix(seq(-4, 4, by = 0.5)) 
+
+# 2. Calculate Expected Total Scores
+# Using the TCC (Test Characteristic Curve) of the BEST MODEL, 
+# we compute the theoretical score a person with a specific Theta would obtain.
+# Note: This is the "True Score" (score without measurement error).
+expected_scores <- expected.test(best_model, theta_grid)
+
+# 3. Compile the Conversion Table
+# Merge Theta and Scores into a clean dataframe for reporting.
+conversion_table <- data.frame(
+  Theta_Ability = theta_grid,
+  Expected_Score = round(expected_scores, 1) # Round to 1 decimal place
+)
+
+# 4. Display the Table
+print(conversion_table)
+```
