@@ -9,6 +9,16 @@ For those interested in the theoretical underpinnings and technical documentatio
 * **Estimation Methods (CML vs. MML):** For a detailed comparison between Conditional Maximum Likelihood (CML) and Marginal Maximum Likelihood (MML) estimators, please refer to Bartolucci & Scrucca (2010).
 * **General IRT Framework:** Chapter 4 of *Modern Psychometrics with R* (Mair, 2018) provides an excellent overview of Item Response Theory applications in R.
 
+### 🧩 Scalability to Advanced Models (Chapter 4)
+
+The architecture of these scripts is designed to be modular. While the templates focus on Unidimensional Polytomous/Dichotomous models, the workflow can be easily adapted for the advanced applications described in **Chapter 4** of Paek & Cole (2019), such as:
+* **Mixed-Format Data** (Dichotomous + Polytomous items).
+* **Multiple-Group Analysis** (DIF & Equating).
+* **Fixed Item Parameter Calibration (FIPC).**
+* **Latent Regression.**
+
+**Note:** For these cases, the primary adjustment required is within the **Model Specification & Estimation** step (e.g., defining `model` syntax or grouping variables). The subsequent diagnostics, fit statistics, and plotting pipelines remain largely applicable. For detailed theoretical guidance on these specific configurations, please refer directly to Chapter 4 of the book.
+
 ---
 
 ### 🔗 References
