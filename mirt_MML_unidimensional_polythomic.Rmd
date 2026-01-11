@@ -1,0 +1,376 @@
+---
+title: "mirt MML unidimensional polythomic"
+author: "Antony Bologna"
+date: "2025-12-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Clear Environment
+rm(list = ls())
+
+# Clear Console
+cat("\014")
+```
+
+# 1) LIBRARIES
+```{r Libreries}
+# 1. Define the list of required packages
+required_packages <- c("readr", "mirt","here")
+
+# 2. Check which ones are not yet installed
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+
+# 3. If missing, install them
+if(length(new_packages)) install.packages(new_packages)
+
+# 4. (Optional) Load the libraries
+lapply(required_packages, 
+       library, 
+       character.only = TRUE)
+```
+
+# 2) OPTIONS
+```{r Options}
+options(max.print = 99999, 
+        digits = 4)
+```
+
+# 3) LOAD & SELECTION DF
+## 3a) LOAD DF
+```{r Load_df}
+# Load the data
+if(interactive()){
+  file_path <- file.choose() 
+  df <- read_delim(file_path, delim = ";", ...)
+}
+```
+
+## 3b) DF SELECTION
+Create a subset (sub.df) of the dataframe containing only the item response columns (excluding demographic variables or IDs)
+```{r DF_Selection}
+# Choose item columns
+items <- grep("^L_", 
+              names(df),
+              value = T)
+# Number of item
+n.item <- length(items)
+
+# A new df (sub.df) is created here
+sub.df <- df[ , items]
+```
+
+# 4) Pre-Analysis: Dimensionality Check
+```{r Dimensionality_Check}
+# 1. Compute the Polychoric Correlation Matrix
+# Since the data is polytomous (ordinal categories e.g., 1-5), Pearson correlation is biased. 
+# We use polychoric correlation to estimate the linear relationship between the 
+# underlying normal latent traits assumed to generate the ordinal responses.
+poly_matrix <- polychoric(sub.df)$rho
+
+# 2. Run Parallel Analysis (The Gold Standard)
+# This technique compares the eigenvalues of your actual data against 
+# the eigenvalues of random noise (Simulated Data) to determine the number of factors.
+fa.parallel(poly_matrix, 
+            n.obs = nrow(sub.df), 
+            fa = "pc",       # Use Principal Components
+            cor = "poly",    # CRITICAL: Specify 'poly' for polychoric (not 'tet')
+            main = "Parallel Analysis: Check for Unidimensionality")
+
+# --- INTERPRETATION RULE (Empirical) ---
+# Look at the plot generated:
+# - Blue Line = Actual Data (Your items)
+# - Red Line  = Simulated Data (Random noise)
+#
+# CRITERIA:
+# If the Blue Line (Actual Data) has ONLY ONE point/triangle above the Red Line (Simulated), 
+# then the Unidimensionality Assumption is supported.
+#
+# If there are 2 or more points above the red line, the data is likely Multidimensional,
+# and standard unidimensional IRT models might be biased.
+```
+
+# 5) Model Selection
+In this section, 'Model Selection', the PCM, GPCM, GRM, and NRM models are defined. 
+
+## 5a) Model Specification & Estimation
+```{r Mod_Specification}
+# Choose the appropriate Item Response Theory (IRT) model based on theory and fit.
+# Below are templates for the most common polytomous models.
+
+## -------------------- PCM (Partial Credit Model) -------------------- ##
+# A Rasch-family model. It assumes all items have equal discrimination (slope = 1).
+# Since slopes are fixed, we must free the latent factor variance (COV_11) for identification.
+#
+# spec <- mirt.model(paste0('
+#      F = 1-', n.item, '              # All items load on Factor F
+#      START = (1-', n.item, ', a1, 1.0) # Set starting values for slopes (a1) to 1.0
+#      FIXED = (1-', n.item, ', a1)      # Constrain slopes (a1) to be fixed at 1.0
+#      FREE = (GROUP, COV_11)            # Free the factor variance to be estimated
+# '))
+# 
+# (mod <- mirt(data = sub.df,
+#              model = spec,
+#              itemtype = "gpcm",        # Use GPCM framework but with PCM constraints
+#              SE = TRUE))               # Compute Standard Errors
+
+## ---------------- GPCM (Generalized Partial Credit Model) ---------------- ##
+# An extension of the PCM. It allows discrimination parameters (slopes) to vary 
+# across items. 'model = 1' implies a unidimensional model where all items load on F1.
+#
+# (mod <- mirt(data = sub.df,
+#              model = 1,                # 1 Factor (Exploratory Unidimensional)
+#              itemtype = "gpcm",        # Generalized Partial Credit Model
+#              SE = TRUE))
+
+## -------------------- GRM (Graded Response Model) -------------------- ##
+# Based on cumulative probabilities (e.g., Prob of answering >= 2).
+# Very common for Likert scales (Strongly Disagree to Strongly Agree).
+# Assumes ordered categories.
+#
+# (mod <- mirt(data = sub.df, 
+#              model = 1,
+#              itemtype = "graded",      # Graded Response Model
+#              SE = TRUE))
+
+## -------------------- NRM (Nominal Response Model) -------------------- ##
+# The most general model. It does not assume a strict ordering of categories.
+# Useful for analyzing distractors in multiple-choice questions or checking 
+# if Likert categories are functioning in the expected order.
+#
+# (mod <- mirt(data = sub.df, 
+#               model = 1, 
+#               itemtype = "nominal",    # Nominal Response Model
+#               SE = TRUE))
+```
+
+## 5b) Convergence Diagnostics
+```{r mod_Convergence}
+# 1. Verify if the estimation algorithm terminated successfully
+# This confirms that the iterative process stopped within the tolerance limits.
+cat("Has the model reached convergence? ")
+extract.mirt(x = mod, 
+             what = "converged") 
+
+cat("\n")
+
+# 2. Verify the stability of the solution (Second-Order Test)
+# This checks if the Hessian matrix (second derivatives) is positive definite.
+# It ensures the solution is a true local maximum, not a saddle point or unstable solution.
+cat("Is the convergence stable? ")
+extract.mirt(x = mod, 
+             what = "secondordertest")
+```
+
+## 5c) Decomposition of Item Difficulty Parameters
+```{r Item_Difficulty_Parameters}
+
+# 1. Extract item parameters in IRT metric
+# 'IRTpars = TRUE' converts standard intercepts (d) into difficulty thresholds (b).
+# 'simplify = TRUE' returns a matrix for easier manipulation.
+threshold <- coef(mod, 
+                  simplify = TRUE, 
+                  IRTpars = TRUE)$items
+
+# 2. Calculate "Overall Item Difficulty" (Location parameter)
+# We exclude the first column ([, -1]) because it typically contains the 
+# discrimination parameter 'a' (slope).
+# We take the mean of the remaining columns (the thresholds b1, b2, etc.)
+# to find the item's central location on the latent trait.
+(overall.diff <- apply(threshold[ , -1], 1, mean))
+
+# 3. Calculate Deviation Parameters (d_ik or tau)
+# This step computes the distance of each category threshold from the 
+# item's overall difficulty.
+# Formula: Deviation_ik = Threshold_ik - Overall_Difficulty_i
+deviat <- data.frame(threshold[ , -1] - overall.diff)
+
+# 4. Rename columns for clarity
+# Assign names to represent the deviation for each step/category transition.
+names(deviat) <- c("dev1", "dev2", "dev3", "dev4") 
+print(deviat)
+
+# 5. Final Summary Table
+# Combine the Overall Difficulty (Location) with the specific Deviation parameters
+# to view the full structure of item difficulty.
+(comb <- cbind(overall.diff, deviat))
+```
+
+# 6) Person Latent Trait (Ability) Estimation
+```{r Person_Latent_Trait}
+
+# Compute factor scores (ability estimates) for each respondent.
+# We use the 'fscores' function to estimate the latent trait (theta) values.
+(person_scores <- fscores(mod,
+        
+        # Estimation Method: "EAP" (Expected A Posteriori).
+        # This is a Bayesian method that calculates the mean of the posterior distribution.
+        # It is generally preferred over ML/MAP as it is more stable and produces 
+        # fewer extreme values (shrinkage effect).
+        method = "EAP",
+        
+        # Return scores for every individual in the original dataset (rows),
+        # rather than just for unique response patterns.
+        full.scores = TRUE,
+        
+        # Include the Standard Errors (SE) associated with each person's estimate.
+        # This indicates the precision of the measurement for that specific person.
+        full.scores.SE = TRUE
+))
+
+```
+
+# 7) ICC, TCC, and information plots
+```{r Plots}
+
+# Create a list of item names from the dataframe to iterate over
+list.item <- names(sub.df)
+
+# A. Category Characteristic Curves (CCCs) for each item
+# Iterate through each item to plot its specific probability trace lines.
+# For GPCM (polytomous), this shows the probability of choosing each category 
+# (e.g., 0, 1, 2, 3) across the latent trait (Theta).
+for (i in list.item){
+  p <- itemplot(mod, 
+                i, 
+                main = paste("Trace Lines for", i))
+  print(p)
+}
+
+# B. Combined Probability Trace Lines
+# Plot trace lines for items in a single view to compare discrimination/slopes visually.
+# (Note: This plot can be crowded if there are many items).
+plot(mod, 
+     type = "trace")
+
+# C. Test Characteristic Curve (TCC)
+# Displays the expected total score of the test as a function of Theta.
+# Useful to see how the raw sum score relates to the latent trait.
+plot(mod)
+
+# D. Test Information Function (TIF) and Standard Error
+# Shows the amount of "Information" (precision) provided by the whole test across Theta.
+# The inverse of Information is the Standard Error (SE), also plotted here.
+# High peaks = high precision for that level of ability.
+plot(mod, 
+     type = "info")
+
+# E. Item Information Functions (IIF)
+# Iterate through each item to plot its individual contribution to the test information.
+# This helps identify which items are most useful for measuring specific levels of the trait.
+for (i in list.item){
+  p <- itemplot(mod, i, 
+                type = "info", 
+                main = paste("Information Function for", i))
+  print(p)
+}
+```
+
+# 8) MODEL-DATA FIT
+
+# 8a) GLOBAL FIT
+```{r Global_fit}
+# Evaluate the overall goodness-of-fit of the model to the data.
+# We use the M2* statistic (an extension of the M2 statistic) because standard Pearson 
+# chi-square tests are unreliable with sparse contingency tables common in polytomous data.
+# Key indices to look for: RMSEA (ideally < .06), SRMSR (ideally < .08), CFI/TLI (> .95).
+M2(mod, type = "M2*")
+```
+
+# 8b) ITEMFIT
+```{r Item_fit}
+# Evaluate how well each individual item fits the model.
+# By default, mirt computes the S-X2 statistic (Orlando & Thissen, 2000), 
+# which compares observed vs. expected response frequencies for each item.
+item_fit_stats <- itemfit(mod)
+print(item_fit_stats)
+
+# Bonferroni Correction for Multiple Testing
+# Since we are performing a statistical test for every single item, the chance of 
+# finding a "significant" misfit just by random chance (Type I error) increases.
+# We adjust the alpha threshold (0.05) by dividing it by the number of items.
+# An item is considered misfitting only if its p-value is lower than this corrected threshold.
+Bonf_corr <- (0.05 / ncol(df))  # or length(df) depending on your object structure
+paste0("The Bonferroni correction of p-value is: ", format(Bonf_corr, scientific = FALSE))
+
+```
+
+# 8c) Empirical Item Plots (Visual Fit Inspection)
+```{r Empirical_Item_Plots}
+
+# Visually compare the model's theoretical predictions against observed data.
+# These plots overlay the estimated Item Characteristic Curves (lines) with the 
+# empirical response proportions (points/dots) calculated across bins of Theta.
+
+# - Solid Lines: Expected probabilities based on the GPCM model.
+# - Points/Dots: Actual observed proportions of responses for people at that ability level.
+# 
+# A good fit is indicated when the empirical points lie close to the theoretical lines.
+# Large deviations suggest the model fails to predict behavior for that item 
+# at specific levels of the latent trait.
+
+n_items <- length(list.item)
+
+for (i in 1:n_items){
+  # Generate empirical plot for the i-th item using the item index.
+  # Note: Adding a title helps identify the item in the output.
+  p <- itemfit(mod, 
+               empirical.plot = i, 
+               main = paste("Empirical Fit Plot -", list.item[i]))
+  print(p)
+}
+```
+
+# 8d) Assessment of Person Fit (Aberrant Response Patterns)
+```{r Person_Fit}
+
+# Calculate person-fit statistics to identify respondents whose response patterns 
+# are unlikely given their estimated ability (Theta) and the model parameters.
+# Commonly used to detect guessing, carelessness, or cheating.
+
+person_fit_stats <- personfit(mod, 
+                              method = "EAP") # Use EAP estimates for consistency
+
+# View the statistics
+head(person_fit_stats)
+
+# Interpretation note:
+# The most common statistic provided is 'Zh' (standardized log-likelihood).
+# - Zh values near 0: Good fit (response pattern matches the model).
+# - Large negative values (e.g., Zh < -3.0): Misfitting/Aberrant pattern.
+#   (e.g., a high-ability person missing very easy items, or vice versa).
+```
+
+## 8e) Assessment of Local Independence
+```{r Local_indipendece}
+
+# 1. LD X2 Statistics (Chen & Thissen, 1997)
+# This computes pairwise Local Dependence indices based on Chi-square statistics.
+# It compares the observed vs. expected frequencies in the crosstabulations of item pairs.
+# - High values suggest that responses to one item depend on the other (violation of LD).
+# - A common rule of thumb: LD values > 10 may indicate problematic dependence.
+LD_stats <- residuals(mod, 
+                      type = "LD",
+                      df.p = TRUE) # df.p = TRUE adds p-values (optional but useful)
+
+# Print the upper triangle of the LD matrix to spot large values
+# (Use round(..., 2) to make it readable)
+print(round(LD_stats, 2))
+
+
+# 2. Yen's Q3 Statistic
+# This calculates the correlation between the residuals of item pairs.
+# Formula: Correlation( (Observed_i - Expected_i), (Observed_j - Expected_j) )
+# - Interpretation: Residuals should be uncorrelated if the model explains the data well.
+# - Cut-off: Correlations > .20 or .25 are typically flagged as evidence of Local Dependence
+#   (meaning items share variance not explained by the latent trait).
+Q3_stats <- residuals(mod, 
+                      type = "Q3")
+
+# View the correlation matrix
+print(round(Q3_stats, 2))
+```
+
+
