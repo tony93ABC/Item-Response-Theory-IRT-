@@ -134,16 +134,6 @@ In this section, 'Model Selection', the PCM, GPCM, GRM, and NRM models are defin
 #              model = 1,
 #              itemtype = "graded",      # Graded Response Model
 #              SE = TRUE))
-
-## -------------------- NRM (Nominal Response Model) -------------------- ##
-# The most general model. It does not assume a strict ordering of categories.
-# Useful for analyzing distractors in multiple-choice questions or checking 
-# if Likert categories are functioning in the expected order.
-#
-# (mod <- mirt(data = sub.df, 
-#               model = 1, 
-#               itemtype = "nominal",    # Nominal Response Model
-#               SE = TRUE))
 ```
 
 ## 5b) Convergence Diagnostics
@@ -372,6 +362,7 @@ Q3_stats <- residuals(mod,
 # View the correlation matrix
 print(round(Q3_stats, 2))
 ```
+
 
 
 
