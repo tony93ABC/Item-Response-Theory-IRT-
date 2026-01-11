@@ -1,5 +1,5 @@
 ---
-title: "mirt MML unidimensional polythomic"
+title: "mirt MML unidimensional Polytomous"
 author: "Antony Bologna"
 date: "2025-12-22"
 output: html_document
@@ -372,5 +372,6 @@ Q3_stats <- residuals(mod,
 # View the correlation matrix
 print(round(Q3_stats, 2))
 ```
+
 
 
