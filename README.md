@@ -29,6 +29,7 @@ The analysis pipeline is fully compatible with Multidimensional Item Response Th
 * **High-Dimensional Data:** Scalable applications to complex constructs (e.g., 8+ dimensions) using both dichotomous (Rasch, 2PL, 3PL) and polytomous (PCM, GPCM, GRM) models.
 
 **Note:** Transitioning to multidimensional models primarily requires updating the **Model Specification** syntax (e.g., specifying `F1 = 1-10`, `F2 = 11-20`, `COV = F1*F2`). The core estimation engine (`mirt`) and the majority of the diagnostic plots provided in these scripts remain applicable and effective.
+
 ---
 
 ### 🔗 References
