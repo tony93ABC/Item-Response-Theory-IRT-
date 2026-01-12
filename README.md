@@ -19,6 +19,16 @@ The architecture of these scripts is designed to be modular. While the templates
 
 **Note:** For these cases, the primary adjustment required is within the **Model Specification & Estimation** step (e.g., defining `model` syntax or grouping variables). The subsequent diagnostics, fit statistics, and plotting pipelines remain largely applicable. For detailed theoretical guidance on these specific configurations, please refer directly to Chapter 4 of the book.
 
+
+### 🌐 Multidimensional IRT Modeling (Chapter 5)
+
+The analysis pipeline is fully compatible with Multidimensional Item Response Theory (MIRT), assuming that more than one latent trait underlies the item responses. Following the framework in **Chapter 5**, the code supports:
+
+* **Between-Item Multidimensionality (Simple Structure):** Where items cluster to measure specific dimensions (e.g., items 1-10 measure Dimension A, items 11-20 measure Dimension B).
+* **Within-Item Multidimensionality (Cross-loading):** Where specific items are indicators for more than one trait simultaneously.
+* **High-Dimensional Data:** Scalable applications to complex constructs (e.g., 8+ dimensions) using both dichotomous (Rasch, 2PL, 3PL) and polytomous (PCM, GPCM, GRM) models.
+
+**Note:** Transitioning to multidimensional models primarily requires updating the **Model Specification** syntax (e.g., specifying `F1 = 1-10`, `F2 = 11-20`, `COV = F1*F2`). The core estimation engine (`mirt`) and the majority of the diagnostic plots provided in these scripts remain applicable and effective.
 ---
 
 ### 🔗 References
